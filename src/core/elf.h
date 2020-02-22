@@ -201,7 +201,7 @@ typedef struct elf_symbol {
     uint32_t name; //Symbol name
     uint8_t info; //Type and binding attributes
     uint8_t other; //Reserved
-    uint16_t sectionTableIndex; //Section table index
+    uint16_t section_table_index; //Section table index
     uint64_t value; //Symbol value
     uint64_t size; //Size of object
 
@@ -249,4 +249,6 @@ typedef struct elf_dyn {
 elf_header_t* elf_load(uint8_t* data);
 
 void elf_unload(elf_header_t* elf);
+
+void* elf_lookup_symbol(elf_header_t* header, const char* name);
 #endif

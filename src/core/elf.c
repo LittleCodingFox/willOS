@@ -6,28 +6,50 @@
 int is_elf(elf_header_t* elf);
 void load_segment(uint8_t* data, elf_program_header_t* program_header);
 int64_t elf_do_reloc(elf_header_t* hdr, elf_rel_t* rel, elf_section_header_t* reltab);
+char* elf_lookup_string(elf_header_t* header, int offset);
 
-static inline elf_section_header_t* elf_section_header(elf_header_t* header) {
-
+inline elf_section_header_t* elf_section_header(elf_header_t* header) {
     return (elf_section_header_t*)((uint64_t)header + header->sh_offset);
 }
 
-static inline elf_section_header_t* elf_section(elf_header_t* header, int index) {
+inline elf_section_header_t* elf_section(elf_header_t* header, int index) {
 
     return elf_section_header(header) + index;
 }
 
-static inline char* elf_str_table(elf_header_t* header) {
+inline char* elf_str_table(elf_header_t* header) {
 
     if (header->strtab_index == ELF_SECTION_INDEX_UNDEFINED) {
 
         return NULL;
     }
 
-    return (char*)((uint64_t)header + elf_section(header, header->strtab_index)->offset);
+    return (char*)elf_section(header, header->strtab_index)->addr;
 }
 
-static inline char* elf_lookup_string(elf_header_t* header, int offset) {
+inline elf_section_header_t* elf_symbol_table_section(elf_header_t* header) {
+    elf_section_header_t* sections = elf_section_header(header);
+
+    for (uint16_t i = 0; i < header->sh_num; i++) {
+        elf_section_header_t* section = sections + i;
+
+        if (section->type == ELF_SECTION_TYPE_SYMTAB) {
+            return section;
+        }
+    }
+
+    return NULL;
+}
+
+inline void* elf_symbol_address(elf_header_t* header, elf_symbol_t* symbol) {
+
+    elf_section_header_t* sections = elf_section_header(header);
+    elf_section_header_t* symbol_section = sections + symbol->section_table_index;
+
+    return (void*)((uint64_t)symbol_section->addr + symbol->value);
+}
+
+char* elf_lookup_string(elf_header_t* header, int offset) {
 
     char* strtab = elf_str_table(header);
 
@@ -39,13 +61,51 @@ static inline char* elf_lookup_string(elf_header_t* header, int offset) {
     return strtab + offset;
 }
 
-static void* elf_lookup_symbol(elf_header_t* header, const char* name) {
+void* elf_lookup_symbol(elf_header_t* header, const char* name) {
 
-    // TODO
+    elf_section_header_t* symbol_section = elf_symbol_table_section(header);
+
+    if (symbol_section == NULL) {
+
+        return NULL;
+    }
+
+    size_t symbol_count = symbol_section->size / symbol_section->entsize;
+    elf_symbol_t *symbols = (elf_symbol_t *)symbol_section->addr;
+    elf_section_header_t *string_table_section = elf_section(header, symbol_section->link);
+    char *string_table = (char*)string_table_section->addr;
+
+    for (size_t i = 0; i < symbol_count; i++) {
+
+        elf_symbol_t* symbol = symbols + i;
+
+        char* symbol_name = string_table + symbol->name;
+
+        if (symbol_name == NULL) {
+
+            continue;
+        }
+
+        size_t len = strlen(name);
+        size_t len2 = strlen(symbol_name);
+
+        if(len != len2) {
+
+            continue;
+        }
+
+        if (strncmp(name, symbol_name, len) == 0) {
+
+            elf_section_header_t* section = elf_section(header, symbol->section_table_index);
+
+            return (void*)((uint64_t)section->addr + symbol->value);
+        }
+    }
+
     return NULL;
 }
 
-static int64_t elf_get_symval(elf_header_t* header, int table, uint32_t index) {
+int64_t elf_get_symval(elf_header_t* header, int table, uint32_t index) {
 
     if (table == ELF_SECTION_INDEX_UNDEFINED || index == ELF_SECTION_INDEX_UNDEFINED) {
 
@@ -67,7 +127,7 @@ static int64_t elf_get_symval(elf_header_t* header, int table, uint32_t index) {
 
     elf_symbol_t* symbol = &((elf_symbol_t*)symaddr)[index];
 
-    if (symbol->sectionTableIndex == ELF_SECTION_INDEX_UNDEFINED) {
+    if (symbol->section_table_index == ELF_SECTION_INDEX_UNDEFINED) {
 
         // External symbol, lookup value
         elf_section_header_t* strtab = elf_section(header, symtab->link);
@@ -95,7 +155,7 @@ static int64_t elf_get_symval(elf_header_t* header, int table, uint32_t index) {
             return (int64_t)target;
         }
 
-    } else if (symbol->sectionTableIndex == ELF_SECTION_INDEX_ABS) {
+    } else if (symbol->section_table_index == ELF_SECTION_INDEX_ABS) {
 
         // Absolute symbol
         return symbol->value;
@@ -103,7 +163,7 @@ static int64_t elf_get_symval(elf_header_t* header, int table, uint32_t index) {
     } else {
 
         // Internally defined symbol
-        elf_section_header_t* target = elf_section(header, symbol->sectionTableIndex);
+        elf_section_header_t* target = elf_section(header, symbol->section_table_index);
 
         return (int64_t)header + symbol->value + target->offset;
     }
@@ -264,7 +324,7 @@ elf_header_t* elf_load(uint8_t* data) {
 
                     uint64_t* location = (uint64_t*)relocation_data + entry->offset;
 
-                    if (symbol->sectionTableIndex > 0) {
+                    if (symbol->section_table_index > 0) {
 
                         if (symbol->name != 0) {
 
@@ -273,13 +333,13 @@ elf_header_t* elf_load(uint8_t* data) {
                         } else {
 
                             elf_section_header_t* string_table = elf_section(elf, elf->strtab_index);
-                            elf_section_header_t* section = elf_section(elf, symbol->sectionTableIndex);
+                            elf_section_header_t* section = elf_section(elf, symbol->section_table_index);
 
                             DEBUG("Relocating symbol %s+%lld", ((char*)string_table->addr) + section->name, entry->addend);
                         }
 
                         //Find the symbol
-                        elf_section_header_t* symbol_section = elf_section(elf, symbol->sectionTableIndex);
+                        elf_section_header_t* symbol_section = elf_section(elf, symbol->section_table_index);
                         uint64_t symbol_value = symbol_section->addr + symbol->value + entry->addend;
 
                         //Store the location
@@ -343,7 +403,7 @@ void elf_unload(elf_header_t* elf) {
             DEBUG("Unmapping program header: type=%d addr=%p", program_header->type,
                   program_header->virtual_address);
 
-            unmap(page_containing_address(program_header->virtual_address));
+            free((void*)program_header->virtual_address);
         }
     }
 
@@ -525,13 +585,15 @@ void load_segment(uint8_t* data, elf_program_header_t* program_header) {
 
     DEBUG("load segment at addr=%p with flags=%#x", addr, flags);
 
-    map(page_containing_address(addr), flags);
-
     if (mem_size == 0) {
 
         return;
     }
 
-    memcpy((void*)addr, &data[offset], file_size);
-    memset((void*)(addr + file_size), 0, mem_size - file_size);
+    void* memory = malloc(mem_size);
+
+    memcpy((void*)memory, data + offset, file_size);
+    memset((void*)((uint64_t)memory + file_size), 0, mem_size - file_size);
+
+    program_header->virtual_address = (uint64_t)memory;
 }

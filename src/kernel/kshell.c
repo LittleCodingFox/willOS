@@ -315,8 +315,18 @@ int try_exec(const char* command) {
 
     if (elf) {
 
-        typedef int callable(void);
-        callable* c = (callable*)(elf->entry);
+        typedef int (*callable)(void);
+
+        elf_symbol_t* main_symbol = elf_lookup_symbol(elf, "main");
+
+        if(main_symbol == NULL) {
+
+            printf("`main' not found");
+
+            return -1;
+        }
+
+        callable c = (callable)main_symbol;
         c();
 
         //TODO
