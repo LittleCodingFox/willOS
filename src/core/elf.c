@@ -98,6 +98,8 @@ void* elf_lookup_symbol(elf_header_t* header, const char* name) {
 
             elf_section_header_t* section = elf_section(header, symbol->section_table_index);
 
+            DEBUG("section addr: %#p", section->addr);
+
             return (void*)((uint64_t)section->addr + symbol->value);
         }
     }
@@ -281,7 +283,7 @@ elf_header_t* elf_load(uint8_t* data) {
 
         } else if (section->type == ELF_SECTION_TYPE_RELA) {
 
-            int entry_count = section->size / section->entsize;
+            size_t entry_count = section->size / section->entsize;
 
             if (section->entsize != sizeof(elf_rela_t)) {
 
@@ -347,7 +349,15 @@ elf_header_t* elf_load(uint8_t* data) {
 
                     } else {
 
-                        DEBUG("Unknown symbol %s", symbol_name);
+                        void *symbol = elf_lookup_symbol(elf, symbol_name);
+
+                        if(symbol != NULL) {
+
+                            *location = (uint64_t)symbol;
+                        } else {
+
+                            DEBUG("Unknown symbol %s", symbol_name);
+                        }
 
                         //TODO: Cleanup
 
@@ -366,6 +376,7 @@ elf_header_t* elf_load(uint8_t* data) {
 
     DEBUG("%s", "Phase 3 processing program headers");
 
+/*
     elf_program_header_t* program_headers = (elf_program_header_t*)((uint64_t)data + elf->ph_offset);
 
     for (uint16_t i = 0; i < elf->ph_num; i++) {
@@ -380,6 +391,7 @@ elf_header_t* elf_load(uint8_t* data) {
             load_segment(data, program_header);
         }
     }
+    */
 
     DEBUG("elf entry is now at: %p", elf->entry);
 
